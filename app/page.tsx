@@ -3,11 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { dailyQuestions } from "./dailyQuestions";
 
-type Member = "monaca-a" | "monaca-b";
+type MemberProfile = {
+  id: string;
+  name: string;
+};
 
 type Entry = {
   id: string;
-  member: Member;
+  member: string;
   question: string;
   date: string;
   textAnswer: string;
@@ -30,12 +33,37 @@ type TagScore = {
   meaning: string;
 };
 
-const members: { id: Member; name: string }[] = [
+const defaultMembers: MemberProfile[] = [
   { id: "monaca-a", name: "もなかA" },
   { id: "monaca-b", name: "もなかB" },
 ];
 
 const storageKey = "asobi-sense-entries-v1";
+const membersStorageKey = "asobi-sense-members-v1";
+
+function loadMembersFromStorage(): MemberProfile[] {
+  if (typeof window === "undefined") return defaultMembers;
+  const raw = window.localStorage.getItem(membersStorageKey);
+  if (!raw) return defaultMembers;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0) return defaultMembers;
+    const cleaned = parsed
+      .map((row) => {
+        if (!row || typeof row !== "object") return null;
+        const r = row as Record<string, unknown>;
+        const id = typeof r.id === "string" && r.id.length > 0 ? r.id : null;
+        const rawName = typeof r.name === "string" ? r.name.trim() : "";
+        const name = rawName.length > 0 ? rawName : "（名前未設定）";
+        if (!id) return null;
+        return { id, name };
+      })
+      .filter((m): m is MemberProfile => m !== null);
+    return cleaned.length > 0 ? cleaned : defaultMembers;
+  } catch {
+    return defaultMembers;
+  }
+}
 const questionBlockSizes = [
   25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 15,
 ] as const;
@@ -171,17 +199,21 @@ function buildPersonalInsight(scores: TagScore[]): string {
   return `今週は「${primary.label}」が強めです。${primary.meaning}`;
 }
 
-function buildTeamInsight(scores: TagScore[]): string {
+function buildTeamInsight(scores: TagScore[], memberCount: number): string {
   if (scores.length === 0) {
-    return "2人の回答がそろうほど、チームのあそび観が見えてきます。";
+    if (memberCount <= 1) {
+      return "メンバーが複数になると、チームとしての共通観が見えてきます。";
+    }
+    return `${memberCount}人の回答がそろうほど、チームのあそび観が見えてきます。`;
   }
   if (scores.length === 1) {
-    return `2人の共通感覚は「${scores[0].label}」です。`;
+    return `チームの共通感覚は「${scores[0].label}」です。`;
   }
-  return `2人の共通感覚は「${scores[0].label}」と「${scores[1].label}」です。`;
+  return `チームの共通感覚は「${scores[0].label}」と「${scores[1].label}」です。`;
 }
 
 export default function Home() {
+  const [members, setMembers] = useState<MemberProfile[]>(() => loadMembersFromStorage());
   const [entries, setEntries] = useState<Entry[]>(() => {
     if (typeof window === "undefined") return [];
     const raw = window.localStorage.getItem(storageKey);
@@ -193,7 +225,8 @@ export default function Home() {
           (entry): entry is Partial<Entry> &
             Pick<Entry, "id" | "member" | "question" | "date" | "createdAt"> =>
             typeof entry.id === "string" &&
-            (entry.member === "monaca-a" || entry.member === "monaca-b") &&
+            typeof entry.member === "string" &&
+            entry.member.length > 0 &&
             typeof entry.question === "string" &&
             typeof entry.date === "string" &&
             typeof entry.createdAt === "string"
@@ -214,7 +247,10 @@ export default function Home() {
       return [];
     }
   });
-  const [selectedMember, setSelectedMember] = useState<Member>("monaca-a");
+  const [selectedMember, setSelectedMember] = useState<string>(() => {
+    const initial = loadMembersFromStorage();
+    return initial[0]?.id ?? "monaca-a";
+  });
   const [textAnswer, setTextAnswer] = useState("");
   const [error, setError] = useState("");
 
@@ -225,6 +261,15 @@ export default function Home() {
   useEffect(() => {
     window.localStorage.setItem(storageKey, JSON.stringify(entries));
   }, [entries]);
+
+  useEffect(() => {
+    window.localStorage.setItem(membersStorageKey, JSON.stringify(members));
+  }, [members]);
+
+  const activeMemberId = useMemo(() => {
+    if (members.length === 0) return "";
+    return members.some((m) => m.id === selectedMember) ? selectedMember : members[0].id;
+  }, [members, selectedMember]);
 
   const todaysEntries = useMemo(
     () => entries.filter((entry) => entry.date === todayDate),
@@ -239,17 +284,17 @@ export default function Home() {
   }, [entries, today]);
 
   const personalEntries = useMemo(
-    () => weeklyEntries.filter((entry) => entry.member === selectedMember),
-    [weeklyEntries, selectedMember]
+    () => weeklyEntries.filter((entry) => entry.member === activeMemberId),
+    [weeklyEntries, activeMemberId]
   );
 
   const teamSummary = useMemo(() => {
-    const byMember = members.map((member) => ({
+    return members.map((member) => ({
+      id: member.id,
       member: member.name,
       count: weeklyEntries.filter((entry) => entry.member === member.id).length,
     }));
-    return byMember;
-  }, [weeklyEntries]);
+  }, [weeklyEntries, members]);
 
   const personalTagScores = useMemo(
     () => scoreTagsFromEntries(personalEntries),
@@ -261,27 +306,62 @@ export default function Home() {
     [weeklyEntries]
   );
 
-  const memberAScores = useMemo(
-    () => scoreTagsFromEntries(weeklyEntries.filter((entry) => entry.member === "monaca-a")),
-    [weeklyEntries]
-  );
-  const memberBScores = useMemo(
-    () => scoreTagsFromEntries(weeklyEntries.filter((entry) => entry.member === "monaca-b")),
-    [weeklyEntries]
-  );
   const personalLayered = useMemo(() => groupByLayer(personalTagScores), [personalTagScores]);
   const teamLayered = useMemo(() => groupByLayer(teamTagScores), [teamTagScores]);
+
   const sharedAndDiff = useMemo(() => {
-    const aSet = new Set(memberAScores.map((score) => score.label));
-    const bSet = new Set(memberBScores.map((score) => score.label));
-    const shared = [...aSet].filter((label) => bSet.has(label));
-    const onlyA = [...aSet].filter((label) => !bSet.has(label));
-    const onlyB = [...bSet].filter((label) => !aSet.has(label));
-    return { shared, onlyA, onlyB };
-  }, [memberAScores, memberBScores]);
+    if (members.length === 0) {
+      return { shared: [] as string[], perMember: [] as { id: string; name: string; labels: string[] }[] };
+    }
+    const perMemberSets = members.map((m) => {
+      const weekForMember = weeklyEntries.filter((entry) => entry.member === m.id);
+      if (weekForMember.length === 0) {
+        return { id: m.id, name: m.name, labels: null as Set<string> | null };
+      }
+      const scores = scoreTagsFromEntries(weekForMember);
+      return {
+        id: m.id,
+        name: m.name,
+        labels: new Set(scores.map((s) => s.label)),
+      };
+    });
+
+    const active = perMemberSets.filter(
+      (row): row is { id: string; name: string; labels: Set<string> } => row.labels !== null
+    );
+
+    let shared: string[] = [];
+    if (active.length > 0) {
+      shared = [...active[0].labels];
+      for (let i = 1; i < active.length; i++) {
+        shared = shared.filter((label) => active[i].labels.has(label));
+      }
+    }
+
+    const perMember = perMemberSets.map((ms) => {
+      if (ms.labels === null) {
+        return { id: ms.id, name: ms.name, labels: [] as string[], hasWeekData: false };
+      }
+      return {
+        id: ms.id,
+        name: ms.name,
+        labels: [...ms.labels].filter((l) => !shared.includes(l)).slice(0, 6),
+        hasWeekData: true,
+      };
+    });
+    return { shared, perMember };
+  }, [members, weeklyEntries]);
 
   const saveEntry = () => {
     setError("");
+    if (members.length === 0) {
+      setError("メンバーを1人以上登録してください。");
+      return;
+    }
+    if (!activeMemberId) {
+      setError("回答するメンバーを選んでください。");
+      return;
+    }
     if (textAnswer.trim().length === 0) {
       setError("テキスト回答を入力してください。");
       return;
@@ -289,7 +369,7 @@ export default function Home() {
 
     const newEntry: Entry = {
       id: crypto.randomUUID(),
-      member: selectedMember,
+      member: activeMemberId,
       question: todayQuestion,
       date: todayDate,
       textAnswer: textAnswer.trim(),
@@ -300,14 +380,60 @@ export default function Home() {
     setTextAnswer("");
   };
 
+  const updateMemberName = (id: string, name: string) => {
+    setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, name } : m)));
+  };
+
+  const addMember = () => {
+    setMembers((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), name: `メンバー${prev.length + 1}` },
+    ]);
+  };
+
+  const removeMember = (id: string) => {
+    setMembers((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((m) => m.id !== id);
+    });
+  };
+
   return (
     <main className="page">
       <section className="hero">
-        <p className="tag">あそび感覚ログ / 2人版MVP</p>
+        <p className="tag">あそび感覚ログ / チーム版MVP</p>
         <h1>1日1問で、個人観とチーム観を育てる</h1>
         <p className="lead">
           思想ではなく、その人の「あそび感覚」を毎日少しずつ積み上げます。
         </p>
+      </section>
+
+      <section className="result-card left-card member-panel">
+        <h2>メンバー</h2>
+        <p className="lead">表示名を編集したり、人数を増やせます（ブラウザに保存されます）。</p>
+        <div className="member-rows">
+          {members.map((member) => (
+            <div key={member.id} className="member-row">
+              <input
+                className="input member-name-input"
+                value={member.name}
+                onChange={(event) => updateMemberName(member.id, event.target.value)}
+                aria-label={`${member.name}の表示名`}
+              />
+              <button
+                type="button"
+                className="chip danger-chip"
+                disabled={members.length <= 1}
+                onClick={() => removeMember(member.id)}
+              >
+                削除
+              </button>
+            </div>
+          ))}
+        </div>
+        <button type="button" className="chip add-member-chip" onClick={addMember}>
+          メンバーを追加
+        </button>
       </section>
 
       <section className="result-card left-card">
@@ -319,7 +445,7 @@ export default function Home() {
             <button
               key={member.id}
               type="button"
-              className={`chip ${selectedMember === member.id ? "active" : ""}`}
+              className={`chip ${activeMemberId === member.id ? "active" : ""}`}
               onClick={() => setSelectedMember(member.id)}
             >
               {member.name}
@@ -346,7 +472,7 @@ export default function Home() {
         <article className="menu-card">
           <h2>個人観（今週）</h2>
           <p className="lead">
-            {members.find((member) => member.id === selectedMember)?.name}の記録:
+            {members.find((member) => member.id === activeMemberId)?.name}の記録:
             {personalEntries.length}件
           </p>
           <div className="stack">
@@ -384,24 +510,29 @@ export default function Home() {
 
         <article className="menu-card">
           <h2>チーム観（今週）</h2>
-          <p className="lead">2人の回答量と今日の並びを見える化します。</p>
+          <p className="lead">メンバーごとの回答数と、今日の回答を並べます。</p>
           <div className="stack">
             <div className="insight-box">
-              <p className="mini-date">2人の共通あそび観</p>
-              <p className="mini-answer">{buildTeamInsight(teamTagScores)}</p>
+              <p className="mini-date">チームの共通あそび観</p>
+              <p className="mini-answer">{buildTeamInsight(teamTagScores, members.length)}</p>
               <div className="mini-card">
-                <p className="mini-date">共通タグ</p>
+                <p className="mini-date">共通タグ（今週回答がある人全員に出たタグ）</p>
                 <p className="mini-answer">
                   {sharedAndDiff.shared.length > 0
                     ? sharedAndDiff.shared.slice(0, 6).join(" / ")
                     : "まだ共通タグなし"}
                 </p>
-                <p className="mini-date">差分タグ</p>
-                <p className="mini-answer">
-                  もなかA: {sharedAndDiff.onlyA.slice(0, 4).join(" / ") || "なし"}
-                  <br />
-                  もなかB: {sharedAndDiff.onlyB.slice(0, 4).join(" / ") || "なし"}
-                </p>
+                <p className="mini-date">差分タグ（誰かにだけ出ているもの）</p>
+                {sharedAndDiff.perMember.map((row) => (
+                  <p key={row.id} className="mini-answer diff-line">
+                    {row.name}:{" "}
+                    {!row.hasWeekData
+                      ? "今週の回答なし"
+                      : row.labels.length > 0
+                        ? row.labels.join(" / ")
+                        : "なし"}
+                  </p>
+                ))}
               </div>
               {layerOrder.map((layer) => (
                 <div key={layer} className="layer-row">
@@ -420,7 +551,7 @@ export default function Home() {
               ))}
             </div>
             {teamSummary.map((summary) => (
-              <p key={summary.member} className="lead">
+              <p key={summary.id} className="lead">
                 {summary.member}: {summary.count}件
               </p>
             ))}

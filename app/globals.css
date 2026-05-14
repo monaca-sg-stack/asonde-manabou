@@ -221,6 +221,48 @@ h1 {
   color: #8a8098;
 }
 
+.member-panel {
+  margin-bottom: 16px;
+}
+
+.member-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.member-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.member-name-input {
+  flex: 1;
+  min-width: 140px;
+  margin-bottom: 0;
+}
+
+.danger-chip {
+  border-color: #e8b4b4;
+  color: #8b3a3a;
+}
+
+.danger-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.add-member-chip {
+  margin-top: 4px;
+}
+
+.diff-line {
+  margin-top: 6px;
+}
+
 .quiz-option {
   text-align: left;
   cursor: pointer;
