@@ -221,6 +221,36 @@ h1 {
   color: #8a8098;
 }
 
+.reason-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.reason-card {
+  border: 1px solid #e6deef;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  text-align: left;
+}
+
+.reason-head {
+  margin: 0 0 6px;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.reason-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #3e3748;
+  white-space: pre-wrap;
+}
+
 .member-panel {
   margin-bottom: 16px;
 }
@@ -261,6 +291,86 @@ h1 {
 
 .diff-line {
   margin-top: 6px;
+}
+
+.trajectory-story {
+  margin: 0 0 12px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.weather-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin-bottom: 12px;
+}
+
+.weather-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #ece7f2;
+}
+
+.weather-mood {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.weather-layer {
+  font-size: 11px;
+  font-weight: 700;
+  color: #625472;
+}
+
+.weather-label {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.top5-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.top5-row {
+  display: grid;
+  grid-template-columns: 22px 72px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.top5-rank {
+  font-size: 13px;
+  color: #766f82;
+  font-weight: 700;
+}
+
+.top5-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.top5-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: #f0ebf6;
+  overflow: hidden;
+}
+
+.top5-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #e8c4f0, #ff8fab);
+  min-width: 4px;
 }
 
 .quiz-option {

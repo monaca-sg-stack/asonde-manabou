@@ -1,7 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { dailyQuestions } from "./dailyQuestions";
+import {
+  DEFAULT_SIMILARITY_THRESHOLD,
+  scoreTagsKeywordOnly,
+} from "@/lib/classifyPlayResponse";
+import type { LayerId, TagScore } from "@/lib/labels";
+import { layerLabels, layerOrder } from "@/lib/labels";
+import {
+  buildTrajectoryStory,
+  isDateInRange,
+  layerWeatherFromScores,
+  startOfMonth,
+  startOfPreviousWeek,
+  startOfWeek,
+  topRegularLabels,
+} from "@/lib/playTrajectory";
 
 type MemberProfile = {
   id: string;
@@ -15,22 +30,6 @@ type Entry = {
   date: string;
   textAnswer: string;
   createdAt: string;
-};
-
-type LayerId = "state" | "motivation" | "relationship" | "spacetime" | "attitude";
-
-type TagDefinition = {
-  layer: LayerId;
-  label: string;
-  keywords: string[];
-  meaning: string;
-};
-
-type TagScore = {
-  layer: LayerId;
-  label: string;
-  count: number;
-  meaning: string;
 };
 
 const defaultMembers: MemberProfile[] = [
@@ -68,66 +67,8 @@ const questionBlockSizes = [
   25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 15,
 ] as const;
 
-const layerLabels: Record<LayerId, string> = {
-  state: "状態",
-  motivation: "動機",
-  relationship: "関係性",
-  spacetime: "空間・時間",
-  attitude: "態度・価値観",
-};
-
-const layerOrder: LayerId[] = [
-  "state",
-  "motivation",
-  "relationship",
-  "spacetime",
-  "attitude",
-];
-
-const tagDefinitions: TagDefinition[] = [
-  { layer: "state", label: "没頭", keywords: ["夢中", "集中", "時間を忘れる", "ハマる", "はまる"], meaning: "自我を忘れるほど入り込む" },
-  { layer: "state", label: "高揚", keywords: ["ワクワク", "わくわく", "テンション", "盛り上がる"], meaning: "感情エネルギーが上がる" },
-  { layer: "state", label: "静けさ", keywords: ["ぼーっと", "落ち着く", "穏やか"], meaning: "静かな遊び状態" },
-  { layer: "state", label: "漂流", keywords: ["ふらふら", "流れ", "気まま", "偶然"], meaning: "目的なく流れる" },
-  { layer: "state", label: "リズム", keywords: ["ノリ", "テンポ", "繰り返し"], meaning: "反復の快楽" },
-  { layer: "state", label: "めまい", keywords: ["ぐるぐる", "スリル", "ジェットコースター"], meaning: "感覚を揺さぶる遊び" },
-  { layer: "motivation", label: "自由", keywords: ["のびのび", "気にしない", "無駄", "自由"], meaning: "役に立たなさの自由" },
-  { layer: "motivation", label: "好奇心", keywords: ["知りたい", "気になる", "見てみたい"], meaning: "未知への欲求" },
-  { layer: "motivation", label: "挑戦", keywords: ["試す", "チャレンジ", "難しい"], meaning: "難しさを超えたい" },
-  { layer: "motivation", label: "発見", keywords: ["気づき", "偶然", "ひらめき"], meaning: "思いがけない出会い" },
-  { layer: "motivation", label: "変身", keywords: ["なりきり", "ごっこ", "演じる"], meaning: "別の存在になりたい" },
-  { layer: "motivation", label: "収集", keywords: ["集める", "並べる", "コレクション"], meaning: "世界を手元に集積したい" },
-  { layer: "motivation", label: "破壊", keywords: ["壊す", "崩す", "解体"], meaning: "既存を壊して確かめる" },
-  { layer: "relationship", label: "つながり", keywords: ["一緒", "共有", "笑う"], meaning: "共にいる楽しさ" },
-  { layer: "relationship", label: "共鳴", keywords: ["通じる", "ノリ", "息が合う"], meaning: "感覚が同期する" },
-  { layer: "relationship", label: "競争", keywords: ["勝負", "ライバル", "勝ち負け"], meaning: "競い合う快楽" },
-  { layer: "relationship", label: "ケア", keywords: ["見守る", "安心", "支える"], meaning: "安全だから遊べる" },
-  { layer: "relationship", label: "いたずら", keywords: ["茶化す", "冗談", "ツッコミ"], meaning: "ズラしによる笑い" },
-  { layer: "relationship", label: "儀式", keywords: ["お約束", "合図", "順番"], meaning: "共有ルールが場を作る" },
-  { layer: "spacetime", label: "余白", keywords: ["寄り道", "空白", "休む"], meaning: "急がない時間" },
-  { layer: "spacetime", label: "境界", keywords: ["ここだけ", "秘密", "特別"], meaning: "日常から切り離された場" },
-  { layer: "spacetime", label: "祭り", keywords: ["ハレ", "イベント", "非日常"], meaning: "特別な時間" },
-  { layer: "spacetime", label: "探検", keywords: ["冒険", "行ってみる", "未知"], meaning: "知らない場所へ向かう" },
-  { layer: "spacetime", label: "漂着", keywords: ["偶然見つけた", "迷い込む"], meaning: "計画外の出会い" },
-  { layer: "attitude", label: "実験", keywords: ["試行錯誤", "検証", "やってみる"], meaning: "完成より試行" },
-  { layer: "attitude", label: "創造", keywords: ["作る", "生み出す", "描く"], meaning: "世界を編集する" },
-  { layer: "attitude", label: "編集", keywords: ["組み合わせ", "改造", "アレンジ"], meaning: "既存を遊び直す" },
-  { layer: "attitude", label: "無目的", keywords: ["なんとなく", "意味ない", "遊び半分"], meaning: "役立ちから自由になる" },
-  { layer: "attitude", label: "身体性", keywords: ["触る", "動く", "踊る"], meaning: "身体で考える" },
-  { layer: "attitude", label: "美意識", keywords: ["かわいい", "センス", "心地いい"], meaning: "好きな感覚を追う" },
-];
-
 function formatDate(date: Date): string {
   return date.toISOString().slice(0, 10);
-}
-
-function startOfWeek(date: Date): Date {
-  const cloned = new Date(date);
-  const day = cloned.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  cloned.setDate(cloned.getDate() + diff);
-  cloned.setHours(0, 0, 0, 0);
-  return cloned;
 }
 
 function getQuestionForDate(date: Date): string {
@@ -148,32 +89,6 @@ function getQuestionForDate(date: Date): string {
   return dailyQuestions[startIndex + offsetInBlock];
 }
 
-function normalizeText(value: string): string {
-  return value.toLowerCase();
-}
-
-function scoreTagsFromEntries(entries: Entry[]): TagScore[] {
-  const textBlob = normalizeText(
-    entries.map((entry) => entry.textAnswer).join(" ")
-  );
-
-  return tagDefinitions
-    .map((definition) => {
-      const count = definition.keywords.reduce((sum, keyword) => {
-        const matched = textBlob.includes(normalizeText(keyword)) ? 1 : 0;
-        return sum + matched;
-      }, 0);
-      return {
-        layer: definition.layer,
-        label: definition.label,
-        count,
-        meaning: definition.meaning,
-      };
-    })
-    .filter((item) => item.count > 0)
-    .sort((a, b) => b.count - a.count);
-}
-
 function groupByLayer(scores: TagScore[]): Record<LayerId, TagScore[]> {
   const grouped: Record<LayerId, TagScore[]> = {
     state: [],
@@ -186,7 +101,7 @@ function groupByLayer(scores: TagScore[]): Record<LayerId, TagScore[]> {
     grouped[score.layer].push(score);
   });
   layerOrder.forEach((layer) => {
-    grouped[layer].sort((a, b) => b.count - a.count);
+    grouped[layer].sort((a, b) => b.score - a.score);
   });
   return grouped;
 }
@@ -296,29 +211,140 @@ export default function Home() {
     }));
   }, [weeklyEntries, members]);
 
-  const personalTagScores = useMemo(
-    () => scoreTagsFromEntries(personalEntries),
+  const [semanticPersonal, setSemanticPersonal] = useState<TagScore[] | null>(null);
+  const [semanticTeam, setSemanticTeam] = useState<TagScore[] | null>(null);
+  const [semanticByMember, setSemanticByMember] = useState<Record<string, TagScore[]>>({});
+  const classifyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const personalTextKey = useMemo(
+    () => personalEntries.map((e) => e.textAnswer).join("\u0001"),
     [personalEntries]
   );
-
-  const teamTagScores = useMemo(
-    () => scoreTagsFromEntries(weeklyEntries),
+  const teamTextKey = useMemo(
+    () => weeklyEntries.map((e) => e.textAnswer).join("\u0001"),
     [weeklyEntries]
   );
+  const memberIdsKey = useMemo(() => members.map((m) => m.id).join(","), [members]);
+
+  const keywordPersonalScores = useMemo(
+    () => scoreTagsKeywordOnly(personalEntries),
+    [personalEntries]
+  );
+  const keywordTeamScores = useMemo(
+    () => scoreTagsKeywordOnly(weeklyEntries),
+    [weeklyEntries]
+  );
+
+  const personalTagScores =
+    semanticPersonal !== null ? semanticPersonal : keywordPersonalScores;
+  const teamTagScores = semanticTeam !== null ? semanticTeam : keywordTeamScores;
 
   const personalLayered = useMemo(() => groupByLayer(personalTagScores), [personalTagScores]);
   const teamLayered = useMemo(() => groupByLayer(teamTagScores), [teamTagScores]);
 
+  const personalTrajectory = useMemo(() => {
+    if (!activeMemberId) {
+      return {
+        top5Month: [],
+        weather: layerWeatherFromScores([]),
+        story: buildTrajectoryStory([], []),
+        monthCount: 0,
+      };
+    }
+    const weekStart = startOfWeek(today);
+    const prevWeekStart = startOfPreviousWeek(today);
+    const monthStart = startOfMonth(today);
+    const monthEnd = new Date(monthStart);
+    monthEnd.setMonth(monthEnd.getMonth() + 1);
+
+    const memberEntries = entries.filter((e) => e.member === activeMemberId);
+    const monthEntries = memberEntries.filter((e) =>
+      isDateInRange(e.date, monthStart, monthEnd)
+    );
+    const lastWeekEntries = memberEntries.filter((e) =>
+      isDateInRange(e.date, prevWeekStart, weekStart)
+    );
+    const lastWeekScores = scoreTagsKeywordOnly(lastWeekEntries);
+
+    return {
+      top5Month: topRegularLabels(monthEntries, 5),
+      weather: layerWeatherFromScores(personalTagScores),
+      story: buildTrajectoryStory(personalTagScores, lastWeekScores),
+      monthCount: monthEntries.length,
+    };
+  }, [entries, activeMemberId, today, personalTagScores]);
+
+  useEffect(() => {
+    if (classifyDebounceRef.current) clearTimeout(classifyDebounceRef.current);
+    classifyDebounceRef.current = setTimeout(() => {
+      void (async () => {
+        const fetchScores = async (text: string): Promise<TagScore[]> => {
+          if (!text.trim()) return [];
+          const res = await fetch("/api/play-labels", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text,
+              similarityThreshold: DEFAULT_SIMILARITY_THRESHOLD,
+            }),
+          });
+          if (!res.ok) throw new Error(String(res.status));
+          const data = (await res.json()) as { scores?: TagScore[] };
+          return Array.isArray(data.scores) ? data.scores : [];
+        };
+
+        try {
+          const personalText = personalEntries.map((e) => e.textAnswer).join("\n");
+          const teamText = weeklyEntries.map((e) => e.textAnswer).join("\n");
+
+          const [pScores, tScores] = await Promise.all([
+            fetchScores(personalText),
+            fetchScores(teamText),
+          ]);
+          setSemanticPersonal(pScores);
+          setSemanticTeam(tScores);
+
+          const byMember: Record<string, TagScore[]> = {};
+          await Promise.all(
+            members.map(async (m) => {
+              const t = weeklyEntries
+                .filter((e) => e.member === m.id)
+                .map((e) => e.textAnswer)
+                .join("\n");
+              byMember[m.id] = await fetchScores(t);
+            })
+          );
+          setSemanticByMember(byMember);
+        } catch {
+          setSemanticPersonal(null);
+          setSemanticTeam(null);
+          setSemanticByMember({});
+        }
+      })();
+    }, 450);
+
+    return () => {
+      if (classifyDebounceRef.current) clearTimeout(classifyDebounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 回答本文とメンバー構成は textKey / memberIdsKey で追跡
+  }, [personalTextKey, teamTextKey, memberIdsKey]);
+
   const sharedAndDiff = useMemo(() => {
     if (members.length === 0) {
-      return { shared: [] as string[], perMember: [] as { id: string; name: string; labels: string[] }[] };
+      return {
+        shared: [] as string[],
+        perMember: [] as { id: string; name: string; labels: string[]; hasWeekData: boolean }[],
+      };
     }
     const perMemberSets = members.map((m) => {
       const weekForMember = weeklyEntries.filter((entry) => entry.member === m.id);
       if (weekForMember.length === 0) {
         return { id: m.id, name: m.name, labels: null as Set<string> | null };
       }
-      const scores = scoreTagsFromEntries(weekForMember);
+      const scores =
+        m.id in semanticByMember
+          ? semanticByMember[m.id]!
+          : scoreTagsKeywordOnly(weekForMember);
       return {
         id: m.id,
         name: m.name,
@@ -350,7 +376,7 @@ export default function Home() {
       };
     });
     return { shared, perMember };
-  }, [members, weeklyEntries]);
+  }, [members, weeklyEntries, semanticByMember]);
 
   const saveEntry = () => {
     setError("");
@@ -477,6 +503,50 @@ export default function Home() {
           </p>
           <div className="stack">
             <div className="insight-box">
+              <p className="mini-date">遊び感の軌跡（②③④）</p>
+              <p className="trajectory-story">{personalTrajectory.story}</p>
+
+              <p className="mini-date">③ レイヤー別の天気（今週）</p>
+              <div className="weather-grid">
+                {personalTrajectory.weather.map((row) => (
+                  <div key={row.layer} className="weather-cell">
+                    <span className="weather-mood" aria-hidden>
+                      {row.mood}
+                    </span>
+                    <span className="weather-layer">{row.layerName}</span>
+                    <span className="weather-label">
+                      {row.label ?? "まだ薄い"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <p className="mini-date">
+                ② 今月の常連ラベル（{personalTrajectory.monthCount}件の回答から）
+              </p>
+              {personalTrajectory.top5Month.length > 0 ? (
+                <div className="top5-list">
+                  {personalTrajectory.top5Month.map((row, index) => {
+                    const max = personalTrajectory.top5Month[0]?.totalScore || 1;
+                    const widthPct = Math.round((row.totalScore / max) * 100);
+                    return (
+                      <div key={row.label} className="top5-row">
+                        <span className="top5-rank">{index + 1}</span>
+                        <span className="top5-label">{row.label}</span>
+                        <div className="top5-bar-track">
+                          <div
+                            className="top5-bar-fill"
+                            style={{ width: `${widthPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="lead">今月の回答がたまると、常連ラベルが見えてきます。</p>
+              )}
+
               <p className="mini-date">いま見えているあそび観</p>
               <p className="mini-answer">{buildPersonalInsight(personalTagScores)}</p>
               {layerOrder.map((layer) => (
@@ -485,7 +555,7 @@ export default function Home() {
                   <div className="tag-list">
                     {personalLayered[layer].slice(0, 2).map((tag) => (
                       <span key={`${layer}-${tag.label}`} className="sense-tag">
-                        {tag.label} ({tag.count})
+                        {tag.label} ({tag.score})
                       </span>
                     ))}
                     {personalLayered[layer].length === 0 ? (
@@ -494,6 +564,18 @@ export default function Home() {
                   </div>
                 </div>
               ))}
+              {personalTagScores.length > 0 ? (
+                <div className="reason-stack" aria-label="上位ラベルと理由">
+                  {personalTagScores.slice(0, 3).map((tag) => (
+                    <div key={`reason-${tag.label}`} className="reason-card">
+                      <p className="reason-head">
+                        {tag.label} {tag.score}
+                      </p>
+                      <div className="reason-body">{tag.reason}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
             {personalEntries.slice(0, 4).map((entry) => (
               <div key={entry.id} className="mini-card">
@@ -540,7 +622,7 @@ export default function Home() {
                   <div className="tag-list">
                     {teamLayered[layer].slice(0, 2).map((tag) => (
                       <span key={`${layer}-team-${tag.label}`} className="sense-tag">
-                        {tag.label} ({tag.count})
+                        {tag.label} ({tag.score})
                       </span>
                     ))}
                     {teamLayered[layer].length === 0 ? (
@@ -549,6 +631,18 @@ export default function Home() {
                   </div>
                 </div>
               ))}
+              {teamTagScores.length > 0 ? (
+                <div className="reason-stack" aria-label="チーム上位ラベルと理由">
+                  {teamTagScores.slice(0, 3).map((tag) => (
+                    <div key={`team-reason-${tag.label}`} className="reason-card">
+                      <p className="reason-head">
+                        {tag.label} {tag.score}
+                      </p>
+                      <div className="reason-body">{tag.reason}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
             {teamSummary.map((summary) => (
               <p key={summary.id} className="lead">
